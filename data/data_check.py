@@ -1,16 +1,16 @@
 import pandas as pd
 
-# df23 = pd.read_sas("HN23_ALL/hn23_all.sas7bdat")
-# df24 = pd.read_sas("HN24_ALL/hn24_all.sas7bdat")
+df23 = pd.read_sas("HN23_ALL/hn23_all.sas7bdat")
+df24 = pd.read_sas("HN24_ALL/hn24_all.sas7bdat")
 
-# pd.Series(df23.columns).to_csv(
-#     "columns_23.csv",
-#     index=False
-# )
-# pd.Series(df24.columns).to_csv(
-#     "columns_24.csv",
-#     index=False
-# )
+pd.Series(df23.columns).to_csv(
+    "columns_23.csv",
+    index=False
+)
+pd.Series(df24.columns).to_csv(
+    "columns_24.csv",
+    index=False
+)
 
 cols = pd.read_csv("columns_24.csv")["0"]
 

@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import shutil
 
 from scipy.stats import chi2_contingency
 from sklearn.model_selection import train_test_split, cross_val_score
@@ -28,8 +29,8 @@ from sklearn.metrics import (
 # 공통 설정
 # =========================
 
-DATA_23_PATH = "./HN23_ALL/hn23_all.sas7bdat"
-DATA_24_PATH = "./HN24_ALL/hn24_all.sas7bdat"
+DATA_23_PATH = "./data/HN23_ALL/hn23_all.sas7bdat"
+DATA_24_PATH = "./data/HN24_ALL/hn24_all.sas7bdat"
 
 sns.set_theme(style="whitegrid")
 
@@ -288,6 +289,22 @@ def confusion_matrix_to_markdown(cm):
 | Actual 0 | {cm[0, 0]} | {cm[0, 1]} |
 | Actual 1 | {cm[1, 0]} | {cm[1, 1]} |"""
 
+
+def copy_readme_assets(assets_dir):
+    docs_dir = Path("./docs/with_HE")
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    target_files = [
+        "correlation_heatmap.png",
+        "roc_curve.png",
+        "xgb_feature_importance.png",
+        "shap_summary.png",
+    ]
+
+    for filename in target_files:
+        src = assets_dir / filename
+        if src.exists():
+            shutil.copy2(src, docs_dir / filename)
 
 # =========================
 # 건강검진 기반 고정밀 모델
@@ -620,6 +637,7 @@ def main():
     xgb_importance_df.to_csv(data_csv_dir / "xgb_feature_importance.csv", index=False, encoding="utf-8-sig")
     metrics_table.to_csv(data_csv_dir / "model_metrics.csv", encoding="utf-8-sig")
     group_mean.to_csv(data_csv_dir / "group_mean.csv", encoding="utf-8-sig")
+    copy_readme_assets(assets_dir)
 
     print(f"\nMarkdown 보고서 저장 완료: {report_path}")
 

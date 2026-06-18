@@ -5,18 +5,21 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import shap
 
 from scipy.stats import chi2_contingency
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
     roc_auc_score,
+    roc_curve,
     confusion_matrix,
     classification_report,
 )
@@ -204,6 +207,52 @@ def save_feature_importance(importance_df, assets_dir , filename):
     return path
 
 
+
+def save_roc_curve(y_test, proba_dict, assets_dir):
+    plt.figure(figsize=(8, 6))
+    for model_name, y_proba in proba_dict.items():
+        fpr, tpr, _ = roc_curve(y_test, y_proba)
+        auc_score = roc_auc_score(y_test, y_proba)
+        plt.plot(fpr, tpr, label=f"{model_name} (AUC={auc_score:.4f})")
+    plt.plot([0, 1], [0, 1], linestyle="--", label="Random Guess")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curve")
+    plt.legend()
+    plt.tight_layout()
+    path = assets_dir / "roc_curve.png"
+    plt.savefig(path, dpi=150)
+    plt.close()
+    return path
+
+
+def save_model_comparison(metrics_table, assets_dir):
+    plot_df = metrics_table.reset_index().melt(
+        id_vars="index",
+        var_name="Metric",
+        value_name="Score",
+    ).rename(columns={"index": "Model"})
+    plt.figure(figsize=(10, 6))
+    sns.barplot(data=plot_df, x="Metric", y="Score", hue="Model")
+    plt.ylim(0, 1)
+    plt.title("Model Performance Comparison")
+    plt.tight_layout()
+    path = assets_dir / "model_comparison.png"
+    plt.savefig(path, dpi=150)
+    plt.close()
+    return path
+
+
+def save_xgb_feature_importance(importance_df, assets_dir):
+    plt.figure(figsize=(8, 5))
+    sns.barplot(data=importance_df, x="importance", y="feature")
+    plt.title("XGBoost Feature Importance")
+    plt.tight_layout()
+    path = assets_dir / "xgb_feature_importance.png"
+    plt.savefig(path, dpi=150)
+    plt.close()
+    return path
+
 def run_chi_square_tests(df, categorical_features):
     results = []
 
@@ -335,6 +384,55 @@ def main():
         "importance": rf_model.feature_importances_,
     }).sort_values("importance", ascending=False)
 
+    # XGBoost
+    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+
+    xgb_model = XGBClassifier(
+        n_estimators=300,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        eval_metric="logloss",
+        scale_pos_weight=scale_pos_weight,
+        random_state=42,
+    )
+
+    xgb_model.fit(X_train, y_train)
+    xgb_pred = xgb_model.predict(X_test)
+    xgb_proba = xgb_model.predict_proba(X_test)[:, 1]
+    xgb_metrics = get_metrics(y_test, xgb_pred, xgb_proba)
+    xgb_cm = confusion_matrix(y_test, xgb_pred)
+
+    xgb_importance_df = pd.DataFrame({
+        "feature": features,
+        "importance": xgb_model.feature_importances_,
+    }).sort_values("importance", ascending=False)
+
+    metrics_table = pd.DataFrame({
+        "Logistic Regression": lr_metrics,
+        "Random Forest": rf_metrics,
+        "XGBoost": xgb_metrics,
+    }).T
+
+
+    # 5-Fold Cross Validation
+    lr_cv_scores = cross_val_score(
+        LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42),
+        scaler.fit_transform(X),
+        y,
+        cv=5,
+        scoring="roc_auc",
+    )
+    rf_cv_scores = cross_val_score(rf_model, X, y, cv=5, scoring="roc_auc")
+    xgb_cv_scores = cross_val_score(xgb_model, X, y, cv=5, scoring="roc_auc")
+
+    cv_result_df = pd.DataFrame({
+        "model": ["Logistic Regression", "Random Forest", "XGBoost"],
+        "roc_auc_mean": [lr_cv_scores.mean(), rf_cv_scores.mean(), xgb_cv_scores.mean()],
+        "roc_auc_std": [lr_cv_scores.std(), rf_cv_scores.std(), xgb_cv_scores.std()],
+    })
+
     # EDA / 시각화
     target_pie = save_target_pie(df, assets_dir)
     hist_paths = save_histograms(df, numeric_features, assets_dir)
@@ -346,6 +444,31 @@ def main():
         assets_dir,
         "rf_feature_importance.png",
     )
+
+    xgb_importance_path = save_xgb_feature_importance(xgb_importance_df, assets_dir)
+    roc_path = save_roc_curve(
+        y_test,
+        {
+            "Logistic Regression": lr_proba,
+            "Random Forest": rf_proba,
+            "XGBoost": xgb_proba,
+        },
+        assets_dir,
+    )
+    model_comparison_path = save_model_comparison(metrics_table, assets_dir)
+
+
+    try:
+        explainer = shap.TreeExplainer(xgb_model)
+        shap_values = explainer.shap_values(X_test)
+        shap.summary_plot(shap_values, X_test, show=False)
+        plt.tight_layout()
+        shap_path = assets_dir / "shap_summary.png"
+        plt.savefig(shap_path, dpi=150, bbox_inches="tight")
+        plt.close()
+    except Exception as e:
+        shap_path = None
+        print(f"SHAP 시각화 생성 실패: {e}")
 
     hist_md = "".join([f"![{p.stem}](assets/{p.name})" + "\n\n" for p in hist_paths])
     box_md = "".join([f"![{p.stem}](assets/{p.name})" + "\n\n" for p in box_paths])
@@ -376,6 +499,16 @@ def main():
     print(rf_cm)
     print("\nFeature Importance")
     print(importance_df.round(4))
+
+    print("\n===== XGBoost 성능 =====")
+    print(metrics_to_markdown(xgb_metrics))
+    print("\nConfusion Matrix")
+    print(xgb_cm)
+    print("\nFeature Importance")
+    print(xgb_importance_df.round(4))
+
+    print("\n===== 5-Fold Cross Validation ROC-AUC =====")
+    print(cv_result_df.round(4))
 
     # Markdown 보고서 생성
     report = f"""# 생활습관 및 BMI 기반 대사증후군 위험 예측 보고서
@@ -458,7 +591,41 @@ def main():
 
 ![Random Forest Feature Importance](assets/{importance_path.name})
 
-## 9. 해석 요약
+## 9. XGBoost 결과
+
+### 9.1 성능
+
+{metrics_to_markdown(xgb_metrics)}
+
+### 9.2 Confusion Matrix
+
+{confusion_matrix_to_markdown(xgb_cm)}
+
+### 9.3 Feature Importance
+
+{xgb_importance_df.round(4).to_markdown(index=False)}
+
+![XGBoost Feature Importance](assets/{xgb_importance_path.name})
+
+## 10. 모델 성능 비교
+
+{metrics_table.round(4).to_markdown()}
+
+![Model Comparison](assets/{model_comparison_path.name})
+
+## 11. ROC Curve
+
+![ROC Curve](assets/{roc_path.name})
+
+## 12. 5-Fold Cross Validation
+
+{cv_result_df.round(4).to_markdown(index=False)}
+
+## 13. SHAP 분석
+
+{"![SHAP Summary](assets/" + shap_path.name + ")" if shap_path is not None else "SHAP 시각화 생성에 실패했습니다."}
+
+## 14. 해석 요약
 
 - 생활습관 및 BMI 기반 모델에서도 대사증후군 위험군을 어느 정도 선별할 수 있었다.
 - BMI와 나이가 가장 강한 예측 변수로 나타났다.
@@ -472,6 +639,9 @@ def main():
 
     coef_df.to_csv(data_csv_dir / "logistic_odds_ratio.csv", index=False, encoding="utf-8-sig")
     importance_df.to_csv(data_csv_dir / "rf_feature_importance.csv", index=False, encoding="utf-8-sig")
+    xgb_importance_df.to_csv(data_csv_dir / "xgb_feature_importance.csv", index=False, encoding="utf-8-sig")
+    metrics_table.to_csv(data_csv_dir / "model_metrics.csv", encoding="utf-8-sig")
+    cv_result_df.to_csv(data_csv_dir / "cross_validation_results.csv", index=False, encoding="utf-8-sig")
 
     print(f"\nMarkdown 보고서 저장 완료: {report_path}")
 

@@ -112,3 +112,8 @@ res_pa_meta = pd.crosstab(
 )
 print(res_sm_meta)
 print(res_pa_meta)
+
+print("==============================================================================================")
+
+print(df['metabolic_syndrome'].value_counts())
+print(df['metabolic_syndrome'].value_counts(normalize=True))
